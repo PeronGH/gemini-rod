@@ -181,18 +181,16 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 }
 
 // handleSafetyConfirmation checks for safety decisions in a function call and requests user confirmation.
-// Returns extraFields to include in the function response, and an error if user denies or context is cancelled.
-func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *genai.FunctionCall) (map[string]any, error) {
-	extraFields := make(map[string]any)
-
+// Returns true if user approved a safety confirmation, false otherwise, and an error if user denies or context is cancelled.
+func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *genai.FunctionCall) (bool, error) {
 	safetyDecision, ok := fc.Args["safety_decision"].(map[string]any)
 	if !ok {
-		return extraFields, nil
+		return false, nil
 	}
 
 	decision, _ := safetyDecision["decision"].(string)
 	if decision != "require_confirmation" {
-		return extraFields, nil
+		return false, nil
 	}
 
 	explanation, _ := safetyDecision["explanation"].(string)
@@ -211,14 +209,13 @@ func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *g
 	// Wait for user decision
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return false, ctx.Err()
 	case <-approveChan:
-		// User approved, mark safety as acknowledged
-		extraFields["safety_acknowledgement"] = "true"
-		return extraFields, nil
+		// User approved
+		return true, nil
 	case <-denyChan:
 		// User denied, terminate
-		return nil, fmt.Errorf("safety check denied by user")
+		return false, fmt.Errorf("safety check denied by user")
 	}
 }
 
@@ -239,13 +236,13 @@ func executeFunctionCalls(
 	for _, fc := range functionCalls {
 		if IsBuiltInTool(fc.Name) {
 			// Check for safety decision before executing built-in tool
-			extraFields, err := handleSafetyConfirmation(ctx, eventChan, fc)
+			approved, err := handleSafetyConfirmation(ctx, eventChan, fc)
 			if err != nil {
 				return nil, err
 			}
 
 			// Handle built-in tool
-			part, err := HandleBuiltInTool(session, fc.Name, fc.Args, extraFields)
+			part, err := HandleBuiltInTool(session, fc.Name, fc.Args, approved)
 			if err != nil {
 				return nil, fmt.Errorf("error handling built-in tool %s: %w", fc.Name, err)
 			}
