@@ -13,12 +13,20 @@ type StartLoopConfig struct {
 	ComputerUseSession            *computeruse.Session
 	ExtraTools                    []*genai.Tool
 	Prompt                        string
-	Model                         string
-	MaxRecentTurnsWithScreenshots int // Maximum number of recent turns with screenshots to keep in history (0 = unlimited)
+	Model                         string // Default: "gemini-2.5-computer-use-preview-10-2025"
+	MaxRecentTurnsWithScreenshots int    // Maximum number of recent turns with screenshots to keep in history. Default: 3, -1 = unlimited
 }
 
 func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
 	eventChan := make(chan Event)
+
+	// Apply defaults
+	if config.Model == "" {
+		config.Model = "gemini-2.5-computer-use-preview-10-2025"
+	}
+	if config.MaxRecentTurnsWithScreenshots == 0 {
+		config.MaxRecentTurnsWithScreenshots = 3
+	}
 
 	go func() {
 		defer close(eventChan)
@@ -98,7 +106,7 @@ func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
 				Parts: responseParts,
 			})
 
-			// Prune old screenshots to keep context size manageable
+			// Prune old screenshots to keep context size manageable (-1 means unlimited)
 			if config.MaxRecentTurnsWithScreenshots > 0 {
 				pruneOldScreenshots(history, config.MaxRecentTurnsWithScreenshots)
 			}

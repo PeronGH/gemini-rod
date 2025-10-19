@@ -12,14 +12,11 @@ import (
 	"google.golang.org/genai"
 )
 
-const screenWidth = 1440
-const screenHeight = 900
-
 func main() {
 	// Parse command-line arguments
 	query := flag.String("query", "", "The query for the browser agent to execute.")
-	initialURL := flag.String("initial-url", "https://www.google.com", "The initial URL loaded for the computer.")
-	model := flag.String("model", "gemini-2.5-computer-use-preview-10-2025", "Set which main model to use.")
+	initialURL := flag.String("initial-url", "", "The initial URL loaded for the computer.")
+	model := flag.String("model", "", "Set which main model to use.")
 	flag.Parse()
 
 	if *query == "" {
@@ -31,8 +28,6 @@ func main() {
 
 	// Initialize computer use session
 	session, err := computeruse.NewSession(ctx, computeruse.SessionConfig{
-		ScreenWidth:          screenWidth,
-		ScreenHeight:         screenHeight,
 		InitialURL:           *initialURL,
 		NormalizeCoordinates: true,
 	})
@@ -55,12 +50,11 @@ func main() {
 
 	// Start the agent loop
 	eventChan := geminirod.StartLoop(ctx, &geminirod.StartLoopConfig{
-		GenaiClient:                   client,
-		ComputerUseSession:            session,
-		ExtraTools:                    nil,
-		Prompt:                        *query,
-		Model:                         *model,
-		MaxRecentTurnsWithScreenshots: 3,
+		GenaiClient:        client,
+		ComputerUseSession: session,
+		ExtraTools:         nil,
+		Prompt:             *query,
+		Model:              *model,
 	})
 
 	// Process events
