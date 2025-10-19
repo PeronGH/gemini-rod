@@ -3,7 +3,7 @@ module github.com/PeronGH/gemini-rod
 go 1.25.3
 
 require (
-	github.com/PeronGH/computer-use-lib v0.0.0-20251019194440-cf73c21b10fa
+	github.com/PeronGH/computer-use-lib v0.0.0-20251019201601-5ca8d585d9d7
 	google.golang.org/genai v1.31.0
 )
 
