@@ -145,8 +145,8 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 			})
 		} else {
 			// Custom tools need subscriber to handle
-			respChan := make(chan map[string]any, 1)
-			rejectChan := make(chan error, 1)
+			respChan := make(chan map[string]any)
+			rejectChan := make(chan error)
 
 			pending := &pendingResponse{
 				funcCall:   funcCall,
@@ -172,7 +172,8 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 	return callEvents, pendingResponses
 }
 
-// executeFunctionCalls executes all function calls (built-in and custom) and returns response parts
+// executeFunctionCalls executes all function calls (built-in and custom) and returns response parts.
+// It maintains the order of function calls to match the Python reference implementation.
 func executeFunctionCalls(
 	ctx context.Context,
 	session *computeruse.Session,
@@ -180,29 +181,32 @@ func executeFunctionCalls(
 	pendingResponses []*pendingResponse,
 ) ([]*genai.Part, error) {
 	var responseParts []*genai.Part
+	pendingIdx := 0
 
-	// Handle built-in tools
+	// Process function calls in order (built-in and custom interleaved)
 	for _, fc := range functionCalls {
 		if IsBuiltInTool(fc.Name) {
+			// Handle built-in tool immediately
 			part, err := HandleBuiltInTool(session, fc.Name, fc.Args)
 			if err != nil {
 				return nil, fmt.Errorf("error handling built-in tool %s: %w", fc.Name, err)
 			}
 			responseParts = append(responseParts, part)
-		}
-	}
+		} else {
+			// Wait for custom tool response from subscriber
+			pending := pendingResponses[pendingIdx]
+			pendingIdx++
 
-	// Wait for custom tool responses from subscribers
-	for _, pending := range pendingResponses {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case err := <-pending.rejectChan:
-			return nil, fmt.Errorf("function call %s rejected: %w", pending.funcCall.Name, err)
-		case response := <-pending.respChan:
-			// Create function response part
-			part := genai.NewPartFromFunctionResponse(pending.funcCall.Name, response)
-			responseParts = append(responseParts, part)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case err := <-pending.rejectChan:
+				return nil, fmt.Errorf("function call %s rejected: %w", pending.funcCall.Name, err)
+			case response := <-pending.respChan:
+				// Create function response part
+				part := genai.NewPartFromFunctionResponse(pending.funcCall.Name, response)
+				responseParts = append(responseParts, part)
+			}
 		}
 	}
 
