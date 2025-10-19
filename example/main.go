@@ -43,13 +43,16 @@ func main() {
 	// Initialize Genai client
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: os.Getenv("GEMINI_API_KEY"),
+		HTTPOptions: genai.HTTPOptions{
+			BaseURL: os.Getenv("GEMINI_BASE_URL"),
+		},
 	})
 	if err != nil {
 		log.Fatalf("Failed to create genai client: %v", err)
 	}
 
 	// Start the agent loop
-	eventChan := geminirod.StartLoop(ctx, &geminirod.StartLoopConfig{
+	eventChan := geminirod.StartLoop(ctx, geminirod.StartLoopConfig{
 		GenaiClient:        client,
 		ComputerUseSession: session,
 		ExtraTools:         nil,

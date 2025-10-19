@@ -17,7 +17,7 @@ type StartLoopConfig struct {
 	MaxRecentTurnsWithScreenshots int    // Maximum number of recent turns with screenshots to keep in history. Default: 3, -1 = unlimited
 }
 
-func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
+func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
 	eventChan := make(chan Event)
 
 	// Apply defaults
