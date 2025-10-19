@@ -121,9 +121,9 @@ func extractText(content *genai.Content) string {
 
 // pendingResponse holds the channels for communicating with custom tool handlers
 type pendingResponse struct {
-	funcCall *genai.FunctionCall
-	respChan chan any
-	errChan  chan error
+	funcCall   *genai.FunctionCall
+	respChan   chan map[string]any
+	rejectChan chan error
 }
 
 // createFunctionCallEvents creates FunctionCall events and prepares response channels
@@ -145,13 +145,13 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 			})
 		} else {
 			// Custom tools need subscriber to handle
-			respChan := make(chan any, 1)
-			errChan := make(chan error, 1)
+			respChan := make(chan map[string]any, 1)
+			rejectChan := make(chan error, 1)
 
 			pending := &pendingResponse{
-				funcCall: funcCall,
-				respChan: respChan,
-				errChan:  errChan,
+				funcCall:   funcCall,
+				respChan:   respChan,
+				rejectChan: rejectChan,
 			}
 			pendingResponses = append(pendingResponses, pending)
 
@@ -159,9 +159,11 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 				FunctionName: funcCall.Name,
 				Args:         funcCall.Args,
 				needsAction:  true,
-				respondFunc: func(response any) error {
+				respondFunc: func(response map[string]any) {
 					respChan <- response
-					return <-errChan
+				},
+				rejectFunc: func(err error) {
+					rejectChan <- err
 				},
 			})
 		}
@@ -194,21 +196,13 @@ func executeFunctionCalls(
 	for _, pending := range pendingResponses {
 		select {
 		case <-ctx.Done():
-			pending.errChan <- ctx.Err()
 			return nil, ctx.Err()
+		case err := <-pending.rejectChan:
+			return nil, fmt.Errorf("function call %s rejected: %w", pending.funcCall.Name, err)
 		case response := <-pending.respChan:
-			// Convert response to map if needed
-			var responseMap map[string]any
-			if m, ok := response.(map[string]any); ok {
-				responseMap = m
-			} else {
-				responseMap = map[string]any{"result": response}
-			}
-
 			// Create function response part
-			part := genai.NewPartFromFunctionResponse(pending.funcCall.Name, responseMap)
+			part := genai.NewPartFromFunctionResponse(pending.funcCall.Name, response)
 			responseParts = append(responseParts, part)
-			pending.errChan <- nil
 		}
 	}
 

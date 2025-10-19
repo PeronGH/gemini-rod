@@ -26,7 +26,8 @@ type FunctionCall struct {
 	FunctionName string
 	Args         map[string]any
 	needsAction  bool
-	respondFunc  func(response any) error
+	respondFunc  func(response map[string]any)
+	rejectFunc   func(err error)
 }
 
 // NeedsAction returns true if this function call requires action from the subscriber
@@ -34,10 +35,17 @@ func (fc *FunctionCall) NeedsAction() bool {
 	return fc.needsAction
 }
 
-// Respond sends a response back for this function call
-func (fc *FunctionCall) Respond(response any) error {
-	if fc.respondFunc == nil {
-		return nil
+// Respond sends a successful response back for this function call.
+// The response must be a map[string]any as required by the Gemini API.
+func (fc *FunctionCall) Respond(response map[string]any) {
+	if fc.respondFunc != nil {
+		fc.respondFunc(response)
 	}
-	return fc.respondFunc(response)
+}
+
+// Reject rejects this function call with an error
+func (fc *FunctionCall) Reject(err error) {
+	if fc.rejectFunc != nil {
+		fc.rejectFunc(err)
+	}
 }
