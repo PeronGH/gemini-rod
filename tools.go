@@ -2,6 +2,7 @@ package geminirod
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	computeruse "github.com/PeronGH/computer-use-lib"
@@ -167,7 +168,10 @@ func handleKeyCombination(session *computeruse.Session, args map[string]any) (ma
 	if !ok {
 		return nil, fmt.Errorf("keys argument must be a string")
 	}
-	if err := session.Key(keys); err != nil {
+	// Split by "+" to convert "Control+C" to ["Control", "C"]
+	// This matches the Python reference implementation and computer-use-lib's expected format
+	keyParts := strings.Split(keys, "+")
+	if err := session.Key(keyParts...); err != nil {
 		return nil, err
 	}
 	return getURLResponse(session)
