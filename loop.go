@@ -9,12 +9,12 @@ import (
 )
 
 type StartLoopConfig struct {
-	GenaiClient                   *genai.Client
-	ComputerUseSession            *computeruse.Session
-	ExtraTools                    []*genai.Tool
-	Prompt                        string
-	Model                         string // Default: "gemini-2.5-computer-use-preview-10-2025"
-	MaxRecentTurnsWithScreenshots int    // Maximum number of recent turns with screenshots to keep in history. Default: 3, -1 = unlimited
+	GenaiClient          *genai.Client
+	ComputerUseSession   *computeruse.Session
+	ExtraTools           []*genai.Tool
+	Prompt               string
+	Model                string // Default: "gemini-2.5-computer-use-preview-10-2025"
+	MaxRecentScreenshots int    // Maximum number of recent screenshots to keep in history. Default: 3, -1 = unlimited
 }
 
 func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
@@ -24,8 +24,8 @@ func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
 	if config.Model == "" {
 		config.Model = "gemini-2.5-computer-use-preview-10-2025"
 	}
-	if config.MaxRecentTurnsWithScreenshots == 0 {
-		config.MaxRecentTurnsWithScreenshots = 3
+	if config.MaxRecentScreenshots == 0 {
+		config.MaxRecentScreenshots = 3
 	}
 
 	go func() {
@@ -94,7 +94,7 @@ func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
 			}
 
 			// Execute function calls and collect responses
-			responseParts, err := executeFunctionCalls(ctx, config.ComputerUseSession, functionCalls, pendingResponses)
+			responseParts, err := executeFunctionCalls(ctx, eventChan, config.ComputerUseSession, functionCalls, pendingResponses)
 			if err != nil {
 				eventChan <- ErrorEvent{Err: err}
 				return
@@ -107,8 +107,8 @@ func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
 			})
 
 			// Prune old screenshots to keep context size manageable (-1 means unlimited)
-			if config.MaxRecentTurnsWithScreenshots > 0 {
-				pruneOldScreenshots(history, config.MaxRecentTurnsWithScreenshots)
+			if config.MaxRecentScreenshots > 0 {
+				pruneOldScreenshots(history, config.MaxRecentScreenshots)
 			}
 		}
 	}()
@@ -180,10 +180,54 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 	return callEvents, pendingResponses
 }
 
+// handleSafetyConfirmation checks for safety decisions in a function call and requests user confirmation.
+// Returns extraFields to include in the function response, and an error if user denies or context is cancelled.
+func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *genai.FunctionCall) (map[string]any, error) {
+	extraFields := make(map[string]any)
+
+	safetyDecision, ok := fc.Args["safety_decision"].(map[string]any)
+	if !ok {
+		return extraFields, nil
+	}
+
+	decision, _ := safetyDecision["decision"].(string)
+	if decision != "require_confirmation" {
+		return extraFields, nil
+	}
+
+	explanation, _ := safetyDecision["explanation"].(string)
+
+	// Create channels for user response
+	approveChan := make(chan struct{})
+	denyChan := make(chan struct{})
+
+	// Emit safety confirmation event
+	eventChan <- SafetyConfirmationEvent{
+		Explanation: explanation,
+		approveFunc: func() { close(approveChan) },
+		denyFunc:    func() { close(denyChan) },
+	}
+
+	// Wait for user decision
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-approveChan:
+		// User approved, mark safety as acknowledged
+		extraFields["safety_acknowledgement"] = "true"
+		return extraFields, nil
+	case <-denyChan:
+		// User denied, terminate
+		return nil, fmt.Errorf("safety check denied by user")
+	}
+}
+
 // executeFunctionCalls executes all function calls (built-in and custom) and returns response parts.
 // It maintains the order of function calls to match the Python reference implementation.
+// Handles safety decisions by emitting SafetyConfirmationEvent and waiting for user response.
 func executeFunctionCalls(
 	ctx context.Context,
+	eventChan chan<- Event,
 	session *computeruse.Session,
 	functionCalls []*genai.FunctionCall,
 	pendingResponses []*pendingResponse,
@@ -194,8 +238,14 @@ func executeFunctionCalls(
 	// Process function calls in order (built-in and custom interleaved)
 	for _, fc := range functionCalls {
 		if IsBuiltInTool(fc.Name) {
-			// Handle built-in tool immediately
-			part, err := HandleBuiltInTool(session, fc.Name, fc.Args)
+			// Check for safety decision before executing built-in tool
+			extraFields, err := handleSafetyConfirmation(ctx, eventChan, fc)
+			if err != nil {
+				return nil, err
+			}
+
+			// Handle built-in tool
+			part, err := HandleBuiltInTool(session, fc.Name, fc.Args, extraFields)
 			if err != nil {
 				return nil, fmt.Errorf("error handling built-in tool %s: %w", fc.Name, err)
 			}

@@ -21,6 +21,29 @@ type ErrorEvent struct {
 
 func (ErrorEvent) isEvent() {}
 
+// SafetyConfirmationEvent represents a safety confirmation that requires user approval
+type SafetyConfirmationEvent struct {
+	Explanation string
+	approveFunc func()
+	denyFunc    func()
+}
+
+func (SafetyConfirmationEvent) isEvent() {}
+
+// Approve approves the safety decision and continues execution
+func (sc *SafetyConfirmationEvent) Approve() {
+	if sc.approveFunc != nil {
+		sc.approveFunc()
+	}
+}
+
+// Deny denies the safety decision and terminates the loop
+func (sc *SafetyConfirmationEvent) Deny() {
+	if sc.denyFunc != nil {
+		sc.denyFunc()
+	}
+}
+
 // FunctionCall represents a function call that may or may not require action from the subscriber
 type FunctionCall struct {
 	FunctionName string

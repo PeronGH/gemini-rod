@@ -2,6 +2,7 @@ package geminirod
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -32,8 +33,9 @@ func IsBuiltInTool(name string) bool {
 	return exists
 }
 
-// HandleBuiltInTool executes a built-in tool and returns a genai.Part with URL and screenshot
-func HandleBuiltInTool(session *computeruse.Session, name string, args map[string]any) (*genai.Part, error) {
+// HandleBuiltInTool executes a built-in tool and returns a genai.Part with URL and screenshot.
+// extraFields can contain additional fields like "safety_acknowledgement" to include in the response.
+func HandleBuiltInTool(session *computeruse.Session, name string, args map[string]any, extraFields map[string]any) (*genai.Part, error) {
 	handler, exists := builtInTools[name]
 	if !exists {
 		return nil, fmt.Errorf("unknown built-in tool: %s", name)
@@ -43,6 +45,9 @@ func HandleBuiltInTool(session *computeruse.Session, name string, args map[strin
 	if err != nil {
 		return nil, err
 	}
+
+	// Merge extra fields (like safety_acknowledgement) into result
+	maps.Copy(result, extraFields)
 
 	// Get screenshot
 	screenshot, err := session.Screenshot()

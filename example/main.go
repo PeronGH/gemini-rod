@@ -84,6 +84,24 @@ func main() {
 				fmt.Println()
 			}
 
+		case geminirod.SafetyConfirmationEvent:
+			// Safety confirmation required
+			fmt.Printf("\nThe model requires explicit confirmation!\n")
+			fmt.Printf("%s\n", e.Explanation)
+			fmt.Print("Do you wish to proceed? [Yes]/[No]: ")
+
+			var response string
+			fmt.Scanln(&response)
+
+			switch response {
+			case "y", "Y", "yes", "Yes", "YES":
+				e.Approve()
+			default:
+				e.Deny()
+				fmt.Println("Terminating agent loop")
+				return
+			}
+
 		case geminirod.ErrorEvent:
 			log.Fatalf("Error: %v", e.Err)
 		}
