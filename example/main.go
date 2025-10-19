@@ -17,6 +17,7 @@ func main() {
 	query := flag.String("query", "", "The query for the browser agent to execute.")
 	initialURL := flag.String("initial-url", "", "The initial URL loaded for the computer.")
 	model := flag.String("model", "", "Set which main model to use.")
+	unsafe := flag.Bool("unsafe", false, "Skip safety confirmation (unrecommended, may violate ToS)")
 	flag.Parse()
 
 	if *query == "" {
@@ -53,11 +54,12 @@ func main() {
 
 	// Start the agent loop
 	eventChan := geminirod.StartLoop(ctx, geminirod.StartLoopConfig{
-		GenaiClient:        client,
-		ComputerUseSession: session,
-		ExtraTools:         nil,
-		Prompt:             *query,
-		Model:              *model,
+		GenaiClient:            client,
+		ComputerUseSession:     session,
+		ExtraTools:             nil,
+		Prompt:                 *query,
+		Model:                  *model,
+		SkipSafetyConfirmation: *unsafe,
 	})
 
 	// Process events

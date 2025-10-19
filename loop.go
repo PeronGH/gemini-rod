@@ -9,12 +9,13 @@ import (
 )
 
 type StartLoopConfig struct {
-	GenaiClient          *genai.Client
-	ComputerUseSession   *computeruse.Session
-	ExtraTools           []*genai.Tool
-	Prompt               string
-	Model                string // Default: "gemini-2.5-computer-use-preview-10-2025"
-	MaxRecentScreenshots int    // Maximum number of recent screenshots to keep in history. Default: 3, -1 = unlimited
+	GenaiClient            *genai.Client
+	ComputerUseSession     *computeruse.Session
+	ExtraTools             []*genai.Tool
+	Prompt                 string
+	Model                  string // Default: "gemini-2.5-computer-use-preview-10-2025"
+	MaxRecentScreenshots   int    // Maximum number of recent screenshots to keep in history. Default: 3, -1 = unlimited
+	SkipSafetyConfirmation bool   // Skip safety confirmations, for test purposes only, may violate terms of service
 }
 
 func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
@@ -94,7 +95,7 @@ func StartLoop(ctx context.Context, config StartLoopConfig) <-chan Event {
 			}
 
 			// Execute function calls and collect responses
-			responseParts, err := executeFunctionCalls(ctx, eventChan, config.ComputerUseSession, functionCalls, pendingResponses)
+			responseParts, err := executeFunctionCalls(ctx, eventChan, config.ComputerUseSession, functionCalls, pendingResponses, config.SkipSafetyConfirmation)
 			if err != nil {
 				eventChan <- ErrorEvent{Err: err}
 				return
@@ -181,16 +182,16 @@ func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionC
 }
 
 // handleSafetyConfirmation checks for safety decisions in a function call and requests user confirmation.
-// Returns true if user approved a safety confirmation, false otherwise, and an error if user denies or context is cancelled.
-func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *genai.FunctionCall) (bool, error) {
+// Returns error if context is exceeded or user denied
+func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *genai.FunctionCall) error {
 	safetyDecision, ok := fc.Args["safety_decision"].(map[string]any)
 	if !ok {
-		return false, nil
+		return nil
 	}
 
 	decision, _ := safetyDecision["decision"].(string)
 	if decision != "require_confirmation" {
-		return false, nil
+		return nil
 	}
 
 	explanation, _ := safetyDecision["explanation"].(string)
@@ -209,13 +210,13 @@ func handleSafetyConfirmation(ctx context.Context, eventChan chan<- Event, fc *g
 	// Wait for user decision
 	select {
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return ctx.Err()
 	case <-approveChan:
 		// User approved
-		return true, nil
+		return nil
 	case <-denyChan:
 		// User denied, terminate
-		return false, fmt.Errorf("safety check denied by user")
+		return fmt.Errorf("safety check denied by user")
 	}
 }
 
@@ -228,6 +229,7 @@ func executeFunctionCalls(
 	session *computeruse.Session,
 	functionCalls []*genai.FunctionCall,
 	pendingResponses []*pendingResponse,
+	skipSafetyConfirmation bool,
 ) ([]*genai.Part, error) {
 	var responseParts []*genai.Part
 	pendingIdx := 0
@@ -236,13 +238,14 @@ func executeFunctionCalls(
 	for _, fc := range functionCalls {
 		if IsBuiltInTool(fc.Name) {
 			// Check for safety decision before executing built-in tool
-			approved, err := handleSafetyConfirmation(ctx, eventChan, fc)
-			if err != nil {
-				return nil, err
+			if !skipSafetyConfirmation {
+				if err := handleSafetyConfirmation(ctx, eventChan, fc); err != nil {
+					return nil, err
+				}
 			}
 
 			// Handle built-in tool
-			part, err := HandleBuiltInTool(session, fc.Name, fc.Args, approved)
+			part, err := HandleBuiltInTool(session, fc.Name, fc.Args)
 			if err != nil {
 				return nil, fmt.Errorf("error handling built-in tool %s: %w", fc.Name, err)
 			}

@@ -33,8 +33,8 @@ func IsBuiltInTool(name string) bool {
 }
 
 // HandleBuiltInTool executes a built-in tool and returns a genai.Part with URL and screenshot.
-// If approved is true, adds "safety_acknowledgement" field to the response.
-func HandleBuiltInTool(session *computeruse.Session, name string, args map[string]any, approved bool) (*genai.Part, error) {
+// Only call it when you approve the action
+func HandleBuiltInTool(session *computeruse.Session, name string, args map[string]any) (*genai.Part, error) {
 	handler, exists := builtInTools[name]
 	if !exists {
 		return nil, fmt.Errorf("unknown built-in tool: %s", name)
@@ -45,10 +45,8 @@ func HandleBuiltInTool(session *computeruse.Session, name string, args map[strin
 		return nil, err
 	}
 
-	// Add safety acknowledgement if approved
-	if approved {
-		result["safety_acknowledgement"] = "true"
-	}
+	// Add safety acknowledgement
+	result["safety_acknowledgement"] = "true"
 
 	// Get screenshot
 	screenshot, err := session.Screenshot()
