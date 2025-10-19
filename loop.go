@@ -9,11 +9,12 @@ import (
 )
 
 type StartLoopConfig struct {
-	GenaiClient        *genai.Client
-	ComputerUseSession *computeruse.Session
-	ExtraTools         []*genai.Tool
-	Prompt             string
-	Model              string
+	GenaiClient                   *genai.Client
+	ComputerUseSession            *computeruse.Session
+	ExtraTools                    []*genai.Tool
+	Prompt                        string
+	Model                         string
+	MaxRecentTurnsWithScreenshots int // Maximum number of recent turns with screenshots to keep in history (0 = unlimited)
 }
 
 func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
@@ -63,28 +64,20 @@ func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
 			history = append(history, resp.Candidates[0].Content)
 
 			// Extract text and function calls from response
-			var text string
-			for _, part := range resp.Candidates[0].Content.Parts {
-				if part.Text != "" {
-					text += part.Text
-				}
-			}
-
+			text := extractText(resp.Candidates[0].Content)
 			functionCalls := resp.FunctionCalls()
 
-			// Create function call events
-			var callEvents []*FunctionCall
-			for _, fc := range functionCalls {
-				callEvents = append(callEvents, &FunctionCall{
-					FunctionName: fc.Name,
-					Args:         fc.Args,
-					needsAction:  true, // TODO: determine based on whether it's an extra tool or computer use
-					respondFunc: func(response any) error {
-						// TODO: add function response to history
-						return nil
-					},
-				})
+			// If there is no function call, end the loop
+			if len(functionCalls) == 0 {
+				eventChan <- ProgressEvent{
+					Text:          text,
+					FunctionCalls: nil,
+				}
+				break
 			}
+
+			// Create function call events and prepare for responses
+			callEvents, pendingResponses := createFunctionCallEvents(functionCalls)
 
 			// Send progress event
 			eventChan <- ProgressEvent{
@@ -92,16 +85,172 @@ func StartLoop(ctx context.Context, config *StartLoopConfig) <-chan Event {
 				FunctionCalls: callEvents,
 			}
 
-			// If there is no function call, end the loop
-			if len(functionCalls) == 0 {
-				break
+			// Execute function calls and collect responses
+			responseParts, err := executeFunctionCalls(ctx, config.ComputerUseSession, functionCalls, pendingResponses)
+			if err != nil {
+				eventChan <- ErrorEvent{Err: err}
+				return
 			}
 
-			// TODO: wait for responses from subscriber before continuing
-			// TODO: a mechanism to handle tool calls from extra tools
-			// TODO: handle computer use tool calls
+			// Add function responses to history
+			history = append(history, &genai.Content{
+				Role:  genai.RoleUser,
+				Parts: responseParts,
+			})
+
+			// Prune old screenshots to keep context size manageable
+			if config.MaxRecentTurnsWithScreenshots > 0 {
+				pruneOldScreenshots(history, config.MaxRecentTurnsWithScreenshots)
+			}
 		}
 	}()
 
 	return eventChan
+}
+
+// extractText extracts all text parts from a content
+func extractText(content *genai.Content) string {
+	var text string
+	for _, part := range content.Parts {
+		if part.Text != "" {
+			text += part.Text
+		}
+	}
+	return text
+}
+
+// pendingResponse holds the channels for communicating with custom tool handlers
+type pendingResponse struct {
+	funcCall *genai.FunctionCall
+	respChan chan any
+	errChan  chan error
+}
+
+// createFunctionCallEvents creates FunctionCall events and prepares response channels
+func createFunctionCallEvents(functionCalls []*genai.FunctionCall) ([]*FunctionCall, []*pendingResponse) {
+	var callEvents []*FunctionCall
+	var pendingResponses []*pendingResponse
+
+	for _, fc := range functionCalls {
+		funcCall := fc // capture for closure
+		isBuiltIn := IsBuiltInTool(funcCall.Name)
+
+		if isBuiltIn {
+			// Built-in tools are handled automatically
+			callEvents = append(callEvents, &FunctionCall{
+				FunctionName: funcCall.Name,
+				Args:         funcCall.Args,
+				needsAction:  false,
+				respondFunc:  nil,
+			})
+		} else {
+			// Custom tools need subscriber to handle
+			respChan := make(chan any, 1)
+			errChan := make(chan error, 1)
+
+			pending := &pendingResponse{
+				funcCall: funcCall,
+				respChan: respChan,
+				errChan:  errChan,
+			}
+			pendingResponses = append(pendingResponses, pending)
+
+			callEvents = append(callEvents, &FunctionCall{
+				FunctionName: funcCall.Name,
+				Args:         funcCall.Args,
+				needsAction:  true,
+				respondFunc: func(response any) error {
+					respChan <- response
+					return <-errChan
+				},
+			})
+		}
+	}
+
+	return callEvents, pendingResponses
+}
+
+// executeFunctionCalls executes all function calls (built-in and custom) and returns response parts
+func executeFunctionCalls(
+	ctx context.Context,
+	session *computeruse.Session,
+	functionCalls []*genai.FunctionCall,
+	pendingResponses []*pendingResponse,
+) ([]*genai.Part, error) {
+	var responseParts []*genai.Part
+
+	// Handle built-in tools
+	for _, fc := range functionCalls {
+		if IsBuiltInTool(fc.Name) {
+			part, err := HandleBuiltInTool(session, fc.Name, fc.Args)
+			if err != nil {
+				return nil, fmt.Errorf("error handling built-in tool %s: %w", fc.Name, err)
+			}
+			responseParts = append(responseParts, part)
+		}
+	}
+
+	// Wait for custom tool responses from subscribers
+	for _, pending := range pendingResponses {
+		select {
+		case <-ctx.Done():
+			pending.errChan <- ctx.Err()
+			return nil, ctx.Err()
+		case response := <-pending.respChan:
+			// Convert response to map if needed
+			var responseMap map[string]any
+			if m, ok := response.(map[string]any); ok {
+				responseMap = m
+			} else {
+				responseMap = map[string]any{"result": response}
+			}
+
+			// Create function response part
+			part := genai.NewPartFromFunctionResponse(pending.funcCall.Name, responseMap)
+			responseParts = append(responseParts, part)
+			pending.errChan <- nil
+		}
+	}
+
+	return responseParts, nil
+}
+
+// pruneOldScreenshots removes screenshot images from old turns to keep context size manageable.
+// It keeps only the most recent maxTurns turns that contain screenshots.
+func pruneOldScreenshots(history []*genai.Content, maxTurns int) {
+	turnsWithScreenshotsFound := 0
+
+	// Iterate through history in reverse to find turns with screenshots
+	for i := len(history) - 1; i >= 0; i-- {
+		content := history[i]
+		if content.Role != genai.RoleUser || content.Parts == nil {
+			continue
+		}
+
+		// Check if this content has screenshots from built-in computer use functions
+		hasScreenshot := false
+		for _, part := range content.Parts {
+			if part.FunctionResponse != nil &&
+				part.FunctionResponse.Parts != nil &&
+				IsBuiltInTool(part.FunctionResponse.Name) {
+				hasScreenshot = true
+				break
+			}
+		}
+
+		if hasScreenshot {
+			turnsWithScreenshotsFound++
+			// Remove screenshot images if we exceed the limit
+			if turnsWithScreenshotsFound > maxTurns {
+				for _, part := range content.Parts {
+					if part.FunctionResponse != nil &&
+						part.FunctionResponse.Parts != nil &&
+						IsBuiltInTool(part.FunctionResponse.Name) {
+						// Remove the screenshot parts but keep the function response
+						part.FunctionResponse.Parts = nil
+					}
+				}
+			}
+		}
+	}
 }
