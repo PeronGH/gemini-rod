@@ -48,6 +48,9 @@ func HandleBuiltInTool(session *computeruse.Session, name string, args map[strin
 	// Add safety acknowledgement
 	result["safety_acknowledgement"] = "true"
 
+	// Wait 1s for things to finish rendering
+	time.Sleep(1 * time.Second)
+
 	// Get screenshot
 	screenshot, err := session.Screenshot()
 	if err != nil {

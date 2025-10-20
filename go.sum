@@ -8,6 +8,8 @@ cloud.google.com/go/compute/metadata v0.5.0/go.mod h1:aHnloV2TPI38yx4s9+wAZhHykW
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/PeronGH/computer-use-lib v0.0.0-20251019201601-5ca8d585d9d7 h1:tmhF/Xs1+pk1Y3H+oVfqXlCYGj2SevzjFGYWdElE4cE=
 github.com/PeronGH/computer-use-lib v0.0.0-20251019201601-5ca8d585d9d7/go.mod h1:uDXUj8dRmv0xBwiPR/yzpGw6qw+8cWLcQJ6EAgsu9uM=
+github.com/PeronGH/computer-use-lib v0.0.0-20251019230448-f96c2c5bee7a h1:1Bg/IYM4/tt8I4IoGwfDmseRHdDymWFwSYb99i6i4CA=
+github.com/PeronGH/computer-use-lib v0.0.0-20251019230448-f96c2c5bee7a/go.mod h1:uDXUj8dRmv0xBwiPR/yzpGw6qw+8cWLcQJ6EAgsu9uM=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
